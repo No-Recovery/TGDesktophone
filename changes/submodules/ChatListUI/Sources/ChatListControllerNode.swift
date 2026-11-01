@@ -1473,7 +1473,7 @@ final class ChatListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
         }
         var isDisabled = false
         if let filtersLimit = tabContainerData.2, let folderIndex {
-            isDisabled = !self.context.isPremium && folderIndex >= filtersLimit
+            isDisabled = !self.context.isPremium && folderIndex >= Int(filtersLimit)
         }
         if isDisabled {
             let filtersCount = tabContainerData.0.count(where: { item in

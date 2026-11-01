@@ -1,91 +1,139 @@
-name: Build Telegram IPA (desktop landscape mod)
+name: Build unsigned IPA
 
+# Manual only: one run takes roughly 60-90 minutes on a macOS runner.
 on:
   workflow_dispatch:
+    inputs:
+      bundle_id:
+        description: "Bundle ID of the built app (reverse-DNS). Change it if your eSign certificate is tied to a specific App ID."
+        required: true
+        default: "com.dassd.tglandscape"
+        type: string
+
+permissions:
+  contents: read
 
 jobs:
   build:
-    runs-on: macos-latest
+    # Xcode 27 public preview image: macOS 27.0.1 with Xcode 27.1.
+    # Telegram 13.1.2 declares exactly Xcode 27.1 in versions.json.
+    runs-on: xcode-27
     timeout-minutes: 360
-
+    env:
+      UPSTREAM_REPO: https://github.com/TelegramMessenger/Telegram-iOS.git
+      UPSTREAM_REF: 279f89e4d4f63f17227bf877dc3d8990f22ecd58
+      APP_BUNDLE_ID: ${{ inputs.bundle_id }}
+      APP_URL_SCHEME: tg
     steps:
-      - name: Checkout mod files
+      - name: Checkout build scaffold
         uses: actions/checkout@v4
 
-      - name: Clone upstream Telegram-iOS with submodules
+      - name: Check Telegram API secrets
+        env:
+          TG_API_ID: ${{ secrets.TG_API_ID }}
+          TG_API_HASH: ${{ secrets.TG_API_HASH }}
         run: |
-          set -x
-          sudo mkdir -p /Users/Shared
-          git clone --recursive -j8 https://github.com/TelegramMessenger/Telegram-iOS.git /Users/Shared/telegram-ios
-          cd /Users/Shared/telegram-ios
-          git log -1 --format='upstream commit: %H'
-
-      - name: Apply the mod
-        run: |
-          set -x
-          cd /Users/Shared/telegram-ios
-          if git apply --check "$GITHUB_WORKSPACE/tg-desktop-landscape.patch"; then
-            git apply "$GITHUB_WORKSPACE/tg-desktop-landscape.patch"
-            echo "Patch applied cleanly."
-          else
-            echo "::warning::Patch does not apply cleanly; overwriting the changed files instead."
-            cp -R "$GITHUB_WORKSPACE/changes/submodules/." submodules/
+          set -euo pipefail
+          if [[ -z "${TG_API_ID:-}" || -z "${TG_API_HASH:-}" ]]; then
+            echo "::error::Add repository secrets TG_API_ID and TG_API_HASH (my.telegram.org -> API development tools), then re-run."
+            exit 1
           fi
-          git status --short
 
-      - name: Select Xcode
+      - name: Fetch Telegram-iOS at the pinned commit
         run: |
-          set -x
-          cd /Users/Shared/telegram-ios
-          WANT=$(python3 -c 'import json;print(json.load(open("versions.json"))["xcode"])')
-          echo "Upstream wants Xcode $WANT"
-          ls /Applications | grep -i xcode || true
-          if [ -d "/Applications/Xcode_$WANT.app" ]; then
-            sudo xcode-select -s "/Applications/Xcode_$WANT.app/Contents/Developer"
-            echo "XCODE_OVERRIDE=" >> $GITHUB_ENV
-          else
-            LATEST=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
-            echo "::warning::Xcode $WANT not found, using $LATEST"
-            sudo xcode-select -s "$LATEST/Contents/Developer"
-            echo "XCODE_OVERRIDE=--overrideXcodeVersion" >> $GITHUB_ENV
+          set -euo pipefail
+          SRC="$RUNNER_TEMP/telegram-ios"
+          rm -rf "$SRC"
+          git init -q "$SRC"
+          cd "$SRC"
+          git remote add origin "$UPSTREAM_REPO"
+          git fetch --depth 1 -q origin "$UPSTREAM_REF"
+          git checkout -q --detach FETCH_HEAD
+          git submodule sync --recursive
+          git submodule update --init --recursive --depth 1 --jobs 8
+          git rev-parse HEAD
+
+      - name: Select upstream Xcode
+        run: |
+          set -euo pipefail
+          WANT="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["xcode"])' "$RUNNER_TEMP/telegram-ios/versions.json")"
+          echo "upstream wants Xcode $WANT"
+          if [[ -d "/Applications/Xcode_${WANT}.app" ]]; then
+            sudo xcode-select -s "/Applications/Xcode_${WANT}.app/Contents/Developer"
           fi
           xcodebuild -version
-          df -h /
+          GOT="$(xcodebuild -version | awk '/^Xcode/{print $2}')"
+          if [[ "$GOT" != "$WANT" && "$GOT" != "$WANT".* ]]; then
+            echo "::error::Xcode $WANT is required, runner has $GOT"
+            exit 1
+          fi
 
-            - name: Extend expiry of fake provisioning profiles
-             run: |
-          cd /Users/Shared/telegram-ios
-          python3 - <<'PY'
-          import re, glob
-          for f in glob.glob('build-system/fake-codesigning/profiles/*.mobileprovision'):
-              b = open(f, 'rb').read()
-              nb = re.sub(rb'(<key>ExpirationDate</key>\s*<date>)\d{4}', rb'\g<1>2036', b)
-              open(f, 'wb').write(nb)
-              print(f, 'patched' if nb != b else 'unchanged')
-          PY
-      - name: Build the IPA
+      - name: Apply landscape patch
+        run: bash scripts/apply_patch.sh "$RUNNER_TEMP/telegram-ios"
+
+      - name: Create build configuration
+        env:
+          TG_API_ID: ${{ secrets.TG_API_ID }}
+          TG_API_HASH: ${{ secrets.TG_API_HASH }}
         run: |
-          set -x
-          cd /Users/Shared/telegram-ios
-          BUILD_NUMBER=$((100000 + GITHUB_RUN_NUMBER))
-          python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
+          set -euo pipefail
+          python3 scripts/make_config.py \
+            --upstream "$RUNNER_TEMP/telegram-ios" \
+            --output "$RUNNER_TEMP/build-config.json"
+
+      - name: Enable unsigned device build
+        run: |
+          set -euo pipefail
+          python3 scripts/enable_unsigned_build.py \
+            --make-script "$RUNNER_TEMP/telegram-ios/build-system/Make/Make.py" \
+            --rules-apple-root "$RUNNER_TEMP/telegram-ios/build-system/bazel-rules/rules_apple"
+
+      - name: Restore Bazel cache
+        uses: actions/cache@v4
+        with:
+          path: ~/telegram-bazel-cache
+          key: bazel-${{ runner.os }}-${{ env.UPSTREAM_REF }}-v1
+
+      - name: Build unsigned device app
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/telegram-ios"
+          mkdir -p "$RUNNER_TEMP/out"
           python3 -u build-system/Make/Make.py \
-          --bazelUserRoot="/private/var/tmp/_bazel_containerhost" \
-            $XCODE_OVERRIDE \
+            --cacheDir="$HOME/telegram-bazel-cache" \
             build \
-            --configurationPath="build-system/appstore-configuration.json" \
-            --codesigningInformationPath=build-system/fake-codesigning \
+            --configurationPath="$RUNNER_TEMP/build-config.json" \
+            --xcodeManagedCodesigning \
+            --disableProvisioningProfiles \
             --configuration=release_arm64 \
-            --buildNumber="$BUILD_NUMBER"
-          mkdir -p build/artifacts
-          for f in bazel-out/applebin_ios-ios_arm*-opt-ST-*/bin/Telegram/Telegram.ipa; do
-            cp "$f" build/artifacts/
-          done
-          ls -la build/artifacts
+            --buildNumber="$GITHUB_RUN_NUMBER" \
+            --outputBuildArtifactsPath="$RUNNER_TEMP/out"
+          ls -lh "$RUNNER_TEMP/out"
+
+      - name: Package unsigned IPA
+        run: |
+          set -euo pipefail
+          python3 scripts/package_ipa.py \
+            --input "$RUNNER_TEMP/out/Telegram.ipa" \
+            --output "$GITHUB_WORKSPACE/artifacts/telegram-landscape-unsigned.ipa"
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Telegram-desktop-landscape-ipa
-          path: /Users/Shared/telegram-ios/build/artifacts/Telegram.ipa
+          name: telegram-landscape-unsigned
+          path: artifacts/telegram-landscape-unsigned.ipa
           if-no-files-found: error
+          retention-days: 30
+
+      - name: Summary
+        if: success()
+        run: |
+          {
+            echo "## Unsigned IPA is ready"
+            echo ""
+            echo "- Upstream: $UPSTREAM_REF (Telegram 13.1.2)"
+            echo "- Bundle ID: $APP_BUNDLE_ID"
+            echo "- Artifact: **telegram-landscape-unsigned**"
+            echo ""
+            echo "Download the artifact, unzip it and sign the .ipa with eSign."
+          } >> "$GITHUB_STEP_SUMMARY"
