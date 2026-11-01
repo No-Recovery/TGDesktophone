@@ -1,0 +1,398 @@
+diff --git a/submodules/ChatListUI/Sources/ChatListControllerNode.swift b/submodules/ChatListUI/Sources/ChatListControllerNode.swift
+index 594f370..8032e42 100644
+--- a/submodules/ChatListUI/Sources/ChatListControllerNode.swift
++++ b/submodules/ChatListUI/Sources/ChatListControllerNode.swift
+@@ -1154,6 +1154,7 @@ public final class ChatListContainerNode: ASDisplayNode, ASGestureRecognizerDele
+ final class ChatListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
+     private let context: AccountContext
+     private let location: ChatListControllerLocation
++    private var folderRailView: ChatListFolderRailView?
+     private var presentationData: PresentationData
+     private let animationCache: AnimationCache
+     private let animationRenderer: MultiAnimationRenderer
+@@ -1441,7 +1442,121 @@ final class ChatListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
+         self.searchDisplayController?.updatePresentationData(presentationData)
+     }
+     
++    /// Desktop-style layout: on an iPhone in landscape (wide split layout) the folders are shown as a vertical
++    /// column to the left of the chat list instead of the horizontal tabs. Returns 0 when the column is not shown.
++    private func folderRailWidth(layout: ContainerViewLayout) -> CGFloat {
++        guard UIDevice.current.userInterfaceIdiom == .phone, case .regular = layout.metrics.widthClass else {
++            return 0.0
++        }
++        guard let controller = self.controller, !controller.previewing, self.location == .chatList(groupId: .root) else {
++            return 0.0
++        }
++        guard controller.hasTabs else {
++            return 0.0
++        }
++        return ChatListFolderRailView.railWidth
++    }
++    
++    private func handleFolderRailSelection(id: ChatListFilterTabEntryId) {
++        guard let tabContainerData = self.controller?.tabContainerData else {
++            return
++        }
++        var folderIndex: Int?
++        var index = 0
++        for entry in tabContainerData.0 {
++            if case .filter = entry {
++                if entry.id == id {
++                    folderIndex = index
++                }
++                index += 1
++            }
++        }
++        var isDisabled = false
++        if let filtersLimit = tabContainerData.2, let folderIndex {
++            isDisabled = !self.context.isPremium && folderIndex >= filtersLimit
++        }
++        if isDisabled {
++            let filtersCount = tabContainerData.0.count(where: { item in
++                if case .all = item {
++                    return false
++                } else {
++                    return true
++                }
++            })
++            let context = self.context
++            var replaceImpl: ((ViewController) -> Void)?
++            let controller = PremiumLimitScreen(context: context, subject: .folders, count: Int32(filtersCount), action: {
++                let controller = PremiumIntroScreen(context: context, source: .folders)
++                replaceImpl?(controller)
++                return true
++            })
++            replaceImpl = { [weak controller] c in
++                controller?.replace(with: c)
++            }
++            self.controller?.push(controller)
++        } else {
++            self.controller?.selectTab(id: id)
++        }
++    }
++    
++    /// `layout` is the layout already adjusted by `containerLayoutUpdated` (its left safe inset includes the column).
++    private func updateFolderRail(layout: ContainerViewLayout, transition: ComponentTransition) {
++        let railWidth = self.folderRailWidth(layout: layout)
++        guard railWidth > 0.0, let tabContainerData = self.controller?.tabContainerData else {
++            if let folderRailView = self.folderRailView {
++                self.folderRailView = nil
++                folderRailView.removeFromSuperview()
++            }
++            return
++        }
++        
++        let folderRailView: ChatListFolderRailView
++        if let current = self.folderRailView {
++            folderRailView = current
++        } else {
++            folderRailView = ChatListFolderRailView()
++            folderRailView.tabSelected = { [weak self] id in
++                self?.handleFolderRailSelection(id: id)
++            }
++            folderRailView.editPressed = { [weak self] in
++                guard let self, let controller = self.controller else {
++                    return
++                }
++                controller.push(chatListFilterPresetListController(context: self.context, mode: .default))
++            }
++            self.folderRailView = folderRailView
++        }
++        if folderRailView.superview !== self.view {
++            self.view.addSubview(folderRailView)
++        } else {
++            self.view.bringSubviewToFront(folderRailView)
++        }
++        
++        let originalLeftInset = max(0.0, layout.safeInsets.left - railWidth)
++        let items: [ChatListFolderRailView.Item] = tabContainerData.0.map { entry in
++            switch entry {
++            case let .all(unreadCount):
++                return ChatListFolderRailView.Item(id: .all, title: self.presentationData.strings.ChatList_Tabs_All, badgeValue: unreadCount, badgeIsAccent: true)
++            case let .filter(id, text, unread):
++                return ChatListFolderRailView.Item(id: .filter(id), title: text.text, badgeValue: unread.value, badgeIsAccent: unread.hasUnmuted)
++            }
++        }
++        let size = CGSize(width: originalLeftInset + railWidth, height: layout.size.height)
++        transition.setFrame(view: folderRailView, frame: CGRect(origin: CGPoint(), size: size))
++        folderRailView.update(
++            theme: self.presentationData.theme,
++            strings: self.presentationData.strings,
++            items: items,
++            selectedId: self.mainContainerNode.currentItemFilter,
++            size: size,
++            leftInset: originalLeftInset,
++            topInset: max(layout.statusBarHeight ?? 0.0, layout.safeInsets.top) + 8.0,
++            bottomInset: max(layout.intrinsicInsets.bottom, 8.0)
++        )
++    }
++    
+     private func updateNavigationBar(layout: ContainerViewLayout, deferScrollApplication: Bool, transition: ComponentTransition) -> (navigationHeight: CGFloat, storiesInset: CGFloat) {
++        self.updateFolderRail(layout: layout, transition: transition)
+         let headerContent = self.controller?.updateHeaderContent()
+         
+         var panels: [HeaderPanelContainerComponent.Panel] = []
+@@ -1547,7 +1662,7 @@ final class ChatListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
+         var navigationHeaderPanels: AnyComponent<Empty>?
+         if self.controller?.tabContainerData != nil || !panels.isEmpty {
+             var tabs: AnyComponent<Empty>?
+-            if let tabContainerData = self.controller?.tabContainerData, tabContainerData.0.count > 1 {
++            if let tabContainerData = self.controller?.tabContainerData, tabContainerData.0.count > 1, self.folderRailWidth(layout: layout) == 0.0 {
+                 let folderFilterIndex: (ChatListFilterTabEntryId, [ChatListFilterTabEntry]) -> Int? = { id, entries in
+                     var index = 0
+                     for entry in entries {
+@@ -1880,7 +1995,12 @@ final class ChatListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
+         }
+     }
+     
+-    func containerLayoutUpdated(_ layout: ContainerViewLayout, navigationBarHeight: CGFloat, visualNavigationHeight: CGFloat, cleanNavigationBarHeight: CGFloat, storiesInset: CGFloat, transition: ContainedViewLayoutTransition) {
++    func containerLayoutUpdated(_ inputLayout: ContainerViewLayout, navigationBarHeight: CGFloat, visualNavigationHeight: CGFloat, cleanNavigationBarHeight: CGFloat, storiesInset: CGFloat, transition: ContainedViewLayoutTransition) {
++        // Desktop-style folder column: reserve its width as an extra left safe inset, so the list and the header
++        // are laid out to the right of the column.
++        var layout = inputLayout
++        layout.safeInsets.left += self.folderRailWidth(layout: inputLayout)
++        
+         var navigationBarHeight = navigationBarHeight
+         var visualNavigationHeight = visualNavigationHeight
+         var cleanNavigationBarHeight = cleanNavigationBarHeight
+diff --git a/b/submodules/ChatListUI/Sources/ChatListFolderRailView.swift b/submodules/ChatListUI/Sources/ChatListFolderRailView.swift
+new file mode 100644
+index 0000000..b759529
+--- /dev/null
++++ b/submodules/ChatListUI/Sources/ChatListFolderRailView.swift
+@@ -0,0 +1,206 @@
++import Foundation
++import UIKit
++import Display
++import TelegramPresentationData
++import ChatListFilterTabContainerNode
++
++/// Vertical folder column in the style of Telegram Desktop: icon, title and an unread badge per folder,
++/// plus an "Edit" entry at the end. Shown to the left of the chat list when an iPhone is in landscape.
++final class ChatListFolderRailView: UIView {
++    struct Item: Equatable {
++        let id: ChatListFilterTabEntryId
++        let title: String
++        let badgeValue: Int
++        let badgeIsAccent: Bool
++    }
++    
++    static let railWidth: CGFloat = 64.0
++    
++    private final class ItemView: UIControl {
++        let selectionBackground = UIView()
++        let iconView = UIImageView()
++        let titleLabel = UILabel()
++        let badgeBackground = UIView()
++        let badgeLabel = UILabel()
++        
++        override init(frame: CGRect) {
++            super.init(frame: frame)
++            
++            self.selectionBackground.layer.cornerRadius = 10.0
++            self.selectionBackground.isUserInteractionEnabled = false
++            self.addSubview(self.selectionBackground)
++            
++            self.iconView.contentMode = .center
++            self.iconView.isUserInteractionEnabled = false
++            self.addSubview(self.iconView)
++            
++            self.titleLabel.font = Font.regular(10.0)
++            self.titleLabel.textAlignment = .center
++            self.titleLabel.lineBreakMode = .byTruncatingTail
++            self.titleLabel.isUserInteractionEnabled = false
++            self.addSubview(self.titleLabel)
++            
++            self.badgeBackground.isUserInteractionEnabled = false
++            self.badgeBackground.isHidden = true
++            self.addSubview(self.badgeBackground)
++            
++            self.badgeLabel.font = Font.with(size: 10.0, design: .regular, weight: .semibold, traits: [.monospacedNumbers])
++            self.badgeLabel.textAlignment = .center
++            self.badgeLabel.isUserInteractionEnabled = false
++            self.badgeBackground.addSubview(self.badgeLabel)
++        }
++        
++        required init?(coder: NSCoder) {
++            preconditionFailure()
++        }
++        
++        func update(
++            theme: PresentationTheme,
++            image: UIImage?,
++            title: String,
++            badgeValue: Int,
++            badgeIsAccent: Bool,
++            isSelected: Bool,
++            size: CGSize
++        ) {
++            let accentColor = theme.rootController.tabBar.selectedIconColor
++            let normalColor = theme.rootController.tabBar.iconColor
++            let tint = isSelected ? accentColor : normalColor
++            
++            self.selectionBackground.backgroundColor = accentColor.withAlphaComponent(0.14)
++            self.selectionBackground.isHidden = !isSelected
++            self.selectionBackground.frame = CGRect(x: 6.0, y: 2.0, width: size.width - 12.0, height: size.height - 4.0)
++            
++            self.iconView.image = image?.withRenderingMode(.alwaysTemplate)
++            self.iconView.tintColor = tint
++            self.iconView.frame = CGRect(x: floor((size.width - 28.0) / 2.0), y: 8.0, width: 28.0, height: 28.0)
++            
++            self.titleLabel.text = title
++            self.titleLabel.textColor = tint
++            self.titleLabel.frame = CGRect(x: 2.0, y: 38.0, width: size.width - 4.0, height: 14.0)
++            
++            if badgeValue > 0 {
++                let text = badgeValue > 999 ? "999+" : "\(badgeValue)"
++                self.badgeLabel.text = text
++                self.badgeLabel.textColor = badgeIsAccent ? theme.chatList.unreadBadgeActiveTextColor : theme.chatList.unreadBadgeInactiveTextColor
++                self.badgeBackground.backgroundColor = badgeIsAccent ? theme.chatList.unreadBadgeActiveBackgroundColor : theme.chatList.unreadBadgeInactiveBackgroundColor
++                
++                self.badgeLabel.sizeToFit()
++                let badgeHeight: CGFloat = 16.0
++                let badgeWidth = max(badgeHeight, ceil(self.badgeLabel.bounds.width) + 8.0)
++                self.badgeBackground.frame = CGRect(x: size.width - badgeWidth - 6.0, y: 4.0, width: badgeWidth, height: badgeHeight)
++                self.badgeBackground.layer.cornerRadius = badgeHeight / 2.0
++                self.badgeLabel.frame = CGRect(x: floor((badgeWidth - self.badgeLabel.bounds.width) / 2.0), y: floor((badgeHeight - self.badgeLabel.bounds.height) / 2.0), width: self.badgeLabel.bounds.width, height: self.badgeLabel.bounds.height)
++                self.badgeBackground.isHidden = false
++            } else {
++                self.badgeBackground.isHidden = true
++            }
++        }
++    }
++    
++    private let scrollView = UIScrollView()
++    private let separatorView = UIView()
++    private var itemViews: [ChatListFilterTabEntryId: ItemView] = [:]
++    private let editItemView = ItemView()
++    
++    var tabSelected: ((ChatListFilterTabEntryId) -> Void)?
++    var editPressed: (() -> Void)?
++    
++    override init(frame: CGRect) {
++        super.init(frame: frame)
++        
++        self.scrollView.showsVerticalScrollIndicator = false
++        self.scrollView.showsHorizontalScrollIndicator = false
++        self.scrollView.alwaysBounceVertical = true
++        self.scrollView.contentInsetAdjustmentBehavior = .never
++        self.addSubview(self.scrollView)
++        self.addSubview(self.separatorView)
++        
++        self.editItemView.addTarget(self, action: #selector(self.editItemPressed), for: .touchUpInside)
++        self.scrollView.addSubview(self.editItemView)
++    }
++    
++    required init?(coder: NSCoder) {
++        preconditionFailure()
++    }
++    
++    @objc private func editItemPressed() {
++        self.editPressed?()
++    }
++    
++    @objc private func itemPressed(_ sender: UIControl) {
++        for (id, view) in self.itemViews where view === sender {
++            self.tabSelected?(id)
++            return
++        }
++    }
++    
++    /// - Parameters:
++    ///   - leftInset: the left safe inset (iPhone notch in landscape): the background extends under it, items stay clear of it.
++    func update(theme: PresentationTheme, strings: PresentationStrings, items: [Item], selectedId: ChatListFilterTabEntryId, size: CGSize, leftInset: CGFloat, topInset: CGFloat, bottomInset: CGFloat) {
++        self.backgroundColor = theme.rootController.tabBar.backgroundColor
++        self.separatorView.backgroundColor = theme.rootController.tabBar.separatorColor
++        self.separatorView.frame = CGRect(x: size.width - UIScreenPixel, y: 0.0, width: UIScreenPixel, height: size.height)
++        
++        self.scrollView.frame = CGRect(origin: CGPoint(), size: size)
++        
++        let itemWidth = size.width - leftInset
++        let itemHeight: CGFloat = 56.0
++        let itemSize = CGSize(width: itemWidth, height: itemHeight)
++        
++        var validIds = Set<ChatListFilterTabEntryId>()
++        var y: CGFloat = topInset
++        for item in items {
++            validIds.insert(item.id)
++            
++            let itemView: ItemView
++            if let current = self.itemViews[item.id] {
++                itemView = current
++            } else {
++                itemView = ItemView()
++                itemView.addTarget(self, action: #selector(self.itemPressed(_:)), for: .touchUpInside)
++                self.itemViews[item.id] = itemView
++                self.scrollView.addSubview(itemView)
++            }
++            
++            let symbolName: String
++            if case .all = item.id {
++                symbolName = "bubble.left.and.bubble.right.fill"
++            } else {
++                symbolName = "folder.fill"
++            }
++            let configuration = UIImage.SymbolConfiguration(pointSize: 22.0, weight: .regular)
++            itemView.update(
++                theme: theme,
++                image: UIImage(systemName: symbolName, withConfiguration: configuration),
++                title: item.title,
++                badgeValue: item.badgeValue,
++                badgeIsAccent: item.badgeIsAccent,
++                isSelected: item.id == selectedId,
++                size: itemSize
++            )
++            itemView.frame = CGRect(origin: CGPoint(x: leftInset, y: y), size: itemSize)
++            y += itemHeight
++        }
++        
++        for (id, view) in self.itemViews where !validIds.contains(id) {
++            view.removeFromSuperview()
++            self.itemViews.removeValue(forKey: id)
++        }
++        
++        let editConfiguration = UIImage.SymbolConfiguration(pointSize: 22.0, weight: .regular)
++        self.editItemView.update(
++            theme: theme,
++            image: UIImage(systemName: "slider.horizontal.3", withConfiguration: editConfiguration),
++            title: strings.Common_Edit,
++            badgeValue: 0,
++            badgeIsAccent: false,
++            isSelected: false,
++            size: itemSize
++        )
++        self.editItemView.frame = CGRect(origin: CGPoint(x: leftInset, y: y), size: itemSize)
++        y += itemHeight
++        
++        self.scrollView.contentSize = CGSize(width: size.width, height: y + bottomInset)
++    }
++}
+diff --git a/submodules/Display/Source/Navigation/NavigationSplitContainer.swift b/submodules/Display/Source/Navigation/NavigationSplitContainer.swift
+index fb22822..1d5716f 100644
+--- a/submodules/Display/Source/Navigation/NavigationSplitContainer.swift
++++ b/submodules/Display/Source/Navigation/NavigationSplitContainer.swift
+@@ -16,6 +16,10 @@ public func splitMasterWidth(containerSize: CGSize, division: CGRect?) -> CGFloa
+     if let division, division.width < containerSize.width, division.minY <= 0.5, division.maxY >= containerSize.height - 0.5 {
+         return floorToScreenPixels(division.midX)
+     }
++    if UIDevice.current.userInterfaceIdiom == .phone {
++        // iPhone in landscape: the master pane also holds the vertical folder column, so it is a bit wider.
++        return min(max(340.0, floor(containerSize.width * 0.38)), floor(containerSize.width / 2.0))
++    }
+     return min(max(320.0, floor(containerSize.width / 3.0)), floor(containerSize.width / 2.0))
+ }
+ 
+diff --git a/submodules/Display/Source/WindowContent.swift b/submodules/Display/Source/WindowContent.swift
+index 8873fc6..17782cd 100644
+--- a/submodules/Display/Source/WindowContent.swift
++++ b/submodules/Display/Source/WindowContent.swift
+@@ -344,6 +344,9 @@ public extension UIView {
+ private func layoutMetricsForWindowSize(size: CGSize, orientation: UIInterfaceOrientation?) -> LayoutMetrics {
+     if size.width > 690.0 && size.height > 650.0 {
+         return LayoutMetrics(widthClass: .regular, heightClass: .regular, orientation: orientation, windowSize: size)
++    } else if UIDevice.current.userInterfaceIdiom == .phone && size.width > size.height && size.width >= 640.0 {
++        // Desktop-style layout: on an iPhone in landscape use the wide (split) layout - chat list on the left, chat on the right.
++        return LayoutMetrics(widthClass: .regular, heightClass: .compact, orientation: orientation, windowSize: size)
+     } else {
+         return LayoutMetrics(widthClass: .compact, heightClass: .compact, orientation: orientation, windowSize: size)
+     }
