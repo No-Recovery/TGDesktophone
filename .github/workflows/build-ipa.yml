@@ -52,6 +52,17 @@ jobs:
           xcodebuild -version
           df -h /
 
+            - name: Extend expiry of fake provisioning profiles
+             run: |
+          cd /Users/Shared/telegram-ios
+          python3 - <<'PY'
+          import re, glob
+          for f in glob.glob('build-system/fake-codesigning/profiles/*.mobileprovision'):
+              b = open(f, 'rb').read()
+              nb = re.sub(rb'(<key>ExpirationDate</key>\s*<date>)\d{4}', rb'\g<1>2036', b)
+              open(f, 'wb').write(nb)
+              print(f, 'patched' if nb != b else 'unchanged')
+          PY
       - name: Build the IPA
         run: |
           set -x
