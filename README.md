@@ -1,69 +1,205 @@
-# TGdesktophone — Telegram с десктопным ландшафтом на iPhone
+# TGDesktophone
 
-Мод для Telegram-iOS: в горизонтальной ориентации iPhone включается широкий
-(split) layout как в Telegram Desktop — слева вертикальная колонка папок, справа
-список чатов и открытый чат.
+**Telegram для iPhone с интерфейсом в духе Telegram Desktop.** В горизонтальной
+ориентации приложение включает широкий split-режим: слева вертикальная колонка
+папок, справа список чатов и открытый чат — как в десктопном клиенте, а не
+телефонные табы.
 
-Репозиторий **не содержит исходников Telegram**. Workflow клонирует официальный
+Собирается в **unsigned IPA** на macOS-раннере GitHub Actions и подписывается уже
+на iPhone (eSign, Sideloadly, TrollStore и т.п.).
+
+> Проект экспериментальный: это не форк Telegram с нуля, а небольшой патч поверх
+> официальных исходников. Стабильность и поведение могут отличаться от
+> стокового клиента.
+
+```
+┌──────┬──────────────────┬───────────────────────────────┐
+│  💬  │  Все чаты        │                               │
+│  📁  │  Работа          │                               │
+│  📁  │  Семья           │         открытый чат          │
+│  📁  │  Новости         │                               │
+│  ✏️  │  ...             │                               │
+└──────┴──────────────────┴───────────────────────────────┘
+   колонка      список чатов            чат
+   папок
+```
+
+## Что уже работает
+
+- **Split-layout на iPhone в ландшафте.** При ширине экрана от 640 pt и
+  `width > height` включается wide-режим `Display`: список чатов слева, чат
+  справа. Портрет остаётся штатным.
+- **Вертикальная колонка папок** слева от списка чатов: «Все чаты», папки с
+  иконками, названиями и бейджами непрочитанных, в конце — «Изменить».
+- **Горизонтальные табы скрываются**, когда показана колонка, — они больше не
+  дублируют папки.
+- **Премиум-лимит папок** обрабатывается так же, как в оригинале: при выборе
+  папки сверх лимита открывается экран Premium.
+- **Колонка не мешает остальному**: показывается только в корневом списке чатов,
+  не в форумах, не в превью и не в архивe.
+
+## Чего пока нет
+
+- переключателя режима в настройках — всё включается автоматически по ориентации;
+- настройки ширины колонки и левой панели;
+- отдельного портретного «десктопного» режима;
+- fallback для App Group (см. «Известные проблемы»);
+- проверки на всех моделях iPhone: геометрия рассчитана на экраны от iPhone SE
+  (667 pt) до Pro Max.
+
+## Как это устроено
+
+Репозиторий **не содержит исходников Telegram**. CI клонирует официальный
 [TelegramMessenger/Telegram-iOS](https://github.com/TelegramMessenger/Telegram-iOS)
-на закреплённом коммите, применяет файлы из `changes/` и собирает **unsigned IPA**
-на macOS-раннере GitHub. Подписывается `.ipa` уже на iPhone — например, в eSign.
+на закреплённом коммите, применяет файлы из `changes/` и собирает IPA.
 
-## Что меняется
+```
+GitHub Actions (xcode-27)
+   │
+   ├─ checkout этого репозитория
+   ├─ shallow-fetch upstream @ 279f89e4 (Telegram 13.1.2) + submodules
+   ├─ выбрать Xcode 27.1
+   ├─ скопировать changes/ в upstream
+   ├─ создать build config из секретов TG_API_ID / TG_API_HASH
+   ├─ включить unsigned-режим (Make.py + rules_apple)
+   ├─ bazel build --configuration=release_arm64
+   ├─ вырезать _CodeSignature и mobileprovision
+   └─ artifact: telegram-landscape-unsigned.ipa
+```
 
-| Файл | Изменение |
+| Параметр | Значение |
 | --- | --- |
-| `submodules/Display/Source/WindowContent.swift` | в ландшафте у iPhone включается wide/split layout |
-| `submodules/Display/Source/Navigation/NavigationSplitContainer.swift` | ширина левой панели под колонку папок |
-| `submodules/ChatListUI/Sources/ChatListControllerNode.swift` | колонка папок, выбор папки, скрытие горизонтальных табов |
-| `submodules/ChatListUI/Sources/ChatListFolderRailView.swift` | новый файл: вертикальная колонка папок |
+| Upstream | `279f89e4d4f63f17227bf877dc3d8990f22ecd58` |
+| Версия Telegram | 13.1.2 |
+| Xcode / раннер | 27.1 / `xcode-27` (macOS 27) |
+| Минимальная iOS | 15.0 |
+| Bundle ID по умолчанию | `com.dassd.tglandscape` |
+| Артефакт | `telegram-landscape-unsigned` (30 дней) |
+| Время сборки | ~60–90 минут |
 
-Upstream: `279f89e4d4f63f17227bf877dc3d8990f22ecd58` (Telegram 13.1.2, Xcode 27.1).
+## Изменённые файлы
 
-## Что нужно
+| Файл | Что делает |
+| --- | --- |
+| `changes/submodules/Display/Source/WindowContent.swift` | для iPhone в ландшафте возвращает `widthClass: .regular`, включая split-layout |
+| `changes/submodules/Display/Source/Navigation/NavigationSplitContainer.swift` | на iPhone делает левую панель шире: `max(340, 38% ширины)`, но не больше половины |
+| `changes/submodules/ChatListUI/Sources/ChatListControllerNode.swift` | добавляет колонку папок, выбор папки, скрытие горизонтальных табов, резервирует место под колонку через `safeInsets` |
+| `changes/submodules/ChatListUI/Sources/ChatListFolderRailView.swift` | новый файл: сама вертикальная колонка (иконка, название, бейдж, «Изменить») |
 
-- `TG_API_ID` и `TG_API_HASH` с [my.telegram.org](https://my.telegram.org) →
-  **API development tools** (создай приложение, платформа любая);
-- eSign (или другой подписывальщик) и сертификат на iPhone;
+Ключевые константы, если захочешь подкрутить:
+
+- ширина колонки — `ChatListFolderRailView.railWidth` (64 pt);
+- порог включения ландшафта — `size.width >= 640.0` в `WindowContent.swift`;
+- ширина левой панели — `splitMasterWidth` в `NavigationSplitContainer.swift`.
+
+## Сборка
+
+Нужны:
+
+- GitHub-аккаунт (публичный репозиторий — macOS-минуты бесплатны);
+- `api_id` и `api_hash` с [my.telegram.org](https://my.telegram.org) →
+  **API development tools**;
 - ~1 час.
 
-## Запуск
+### 1. Секреты
 
-1. **Settings → Secrets and variables → Actions → New repository secret**:
-   - `TG_API_ID` — число;
-   - `TG_API_HASH` — 32 hex-символа.
-2. Вкладка **Actions** → **Build unsigned IPA** → **Run workflow**.
-3. `bundle_id` можно оставить `com.dassd.tglandscape`. Меняй только если твой
-   сертификат eSign привязан к конкретному App ID.
-4. Ждать 60–90 минут. Первый прогон дольше: Bazel прогревается.
-5. Скачать внизу run'а артефакт **telegram-landscape-unsigned**, распаковать.
+**Settings → Secrets and variables → Actions → New repository secret**:
 
-## Подпись в eSign
+| Имя | Значение |
+| --- | --- |
+| `TG_API_ID` | число из my.telegram.org |
+| `TG_API_HASH` | 32 hex-символа из my.telegram.org |
 
-1. Перекинь `.ipa` на iPhone (Файлы / Saved Messages / AirDrop).
-2. eSign → **Import** → выбери IPA → подпиши сертификатом → установи.
-3. Bundle ID при подписи оставь тот же, что собирал.
-4. **Настройки → Основные → VPN и управление устройством** → доверь профилю.
+Это идентификатор приложения, а не аккаунта: он не даёт доступа к перепискам.
+В коде и логах не появляется — workflow пишет его только во временный конфиг на
+раннере.
 
-## Если упало
+### 2. Запуск
 
-- **Нет секретов** — добавь `TG_API_ID` и `TG_API_HASH`, перезапусти.
-- **Ошибка Swift в патче** — пришли текст из лога, поправим файл в `changes/`.
-- **`xcode-27` недоступен** — GitHub может убрать preview-образ; тогда меняем
-  `runs-on` и версию Xcode/upstream вместе.
-- **Чёрный экран после установки** — известная проблема App Group у
-  бесплатных/некоторых сертификатов, нужен отдельный fallback-патч.
+**Actions → Build unsigned IPA → Run workflow**:
+
+- **bundle_id** — `com.dassd.tglandscape` по умолчанию. Меняй, только если твой
+  сертификат привязан к конкретному App ID.
+- Ветка — `main`.
+
+### 3. Артефакт
+
+В completed-run внизу страницы: **Artifacts → telegram-landscape-unsigned**.
+Внутри zip лежит `telegram-landscape-unsigned.ipa`.
+
+## Установка через eSign
+
+1. Перекинь `.ipa` на iPhone: «Файлы», Saved Messages или AirDrop.
+2. eSign → **Import** → выбери IPA.
+3. Подпиши своим сертификатом (p12 + mobileprovision) и установи.
+4. Bundle ID при подписи оставь тем же, что собирал.
+5. **Настройки → Основные → VPN и управление устройством** → доверь профилю.
+
+IPA **неподписанный**: в нём нет Apple-подписи и профилей, её ставит eSign.
+
+## Известные проблемы
+
+- **Чёрный экран после запуска.** Некоторые сертификаты (особенно бесплатные) не
+  дают entitlement на App Group, который использует Telegram. Лечится отдельным
+  fallback-патчем — пока не реализован.
+- **Уведомления.** Для пушей нужен рабочий APNs-профиль; с самоподписанным
+  сертификатом их обычно нет.
+- **Геометрия на маленьких экранах.** На iPhone SE список чатов получает ~300 pt;
+  если тесно — уменьши `railWidth` или `splitMasterWidth`.
+- **Ориентация.** Патч опирается на ширину окна, а не на
+  `UIDevice.orientation`, поэтому работает и в split-screen на iPad, но
+  целенаправленно тестировался только на iPhone.
+
+## FAQ
+
+**Почему нужны `TG_API_ID` и `TG_API_HASH`?**
+В исходниках Telegram-iOS их нет — каждый клиент регистрирует своё приложение.
+Без них сборка останавливается на шаге конфигурации, а готовое приложение не
+подключится к серверам.
+
+**Почему IPA не подписан?**
+Подпись требует твоего сертификата и Apple ID. Сборка на CI не должна знать твои
+ключи, поэтому подпись делается на устройстве.
+
+**Можно ли собрать на Windows?**
+Локально — нет, нужен macOS с Xcode. Но собрать можно из браузера: весь процесс
+идёт на раннере GitHub, Windows нужен только чтобы запушить репозиторий.
+
+**Почему именно `xcode-27` и коммит `279f89e4`?**
+`versions.json` этой версии Telegram требует Xcode 27.1; патч написан и проверен
+под этот коммит. При обновлении upstream возможны конфликты.
+
+**Сколько ждать?**
+Первый прогон 60–90 минут (Bazel собирает всё с нуля). Повторные — быстрее за счёт
+кеша.
+
+**Это безопасно для аккаунта?**
+Ты используешь официальные исходники Telegram и свой `api_id`. Но это
+неофициальный клиент: формально он не поддерживается Telegram, а за спам/массовые
+действия аккаунт могут ограничить независимо от клиента.
+
+## Обновление upstream
+
+1. Возьми новый коммит `TelegramMessenger/Telegram-iOS`.
+2. Поменяй `UPSTREAM_REF` в `.github/workflows/build-ipa.yml`.
+3. Проверь, что `changes/` всё ещё соответствует исходникам (сравни с новыми
+   версиями файлов).
+4. Запусти workflow и проверь сборку.
 
 ## Структура
 
 ```
-.github/workflows/build-ipa.yml   — весь конвейер сборки
-changes/                          — четыре файла патча (источник истины)
-tg-desktop-landscape.patch        — тот же патч в виде diff, для справки
-scripts/apply_patch.sh            — копирует changes/ в checkout
-scripts/make_config.py            — собирает build config из секретов
-scripts/enable_unsigned_build.py  — отключает профили и подпись в Bazel
-scripts/package_ipa.py            — чистит подписи и упаковывает IPA
+.github/workflows/build-ipa.yml   конвейер сборки
+changes/                          файлы патча — источник истины
+tg-desktop-landscape.patch        тот же патч в виде diff (для справки)
+scripts/apply_patch.sh            копирует changes/ в checkout
+scripts/make_config.py            build config из секретов
+scripts/enable_unsigned_build.py  отключает профили и legacy signing в Bazel
+scripts/package_ipa.py            чистит подписи и упаковывает IPA
 ```
 
-Сборка для личного использования. Не распространяй клиент под именем Telegram.
+## Дисклеймер
+
+Проект для личного использования и обучения. Не связан с Telegram FZ-LLC.
+Не распространяй собранный клиент под именем Telegram и не выдавай его за
+официальное приложение. Исходники upstream распространяются по их лицензии.
