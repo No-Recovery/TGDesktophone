@@ -59,9 +59,9 @@ jobs:
           BUILD_NUMBER=$((100000 + GITHUB_RUN_NUMBER))
           python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
           python3 -u build-system/Make/Make.py \
-            --bazelUserRoot="/private/var/tmp/_bazel_containerhost" \
-            build \
+          --bazelUserRoot="/private/var/tmp/_bazel_containerhost" \
             $XCODE_OVERRIDE \
+            build \
             --configurationPath="build-system/appstore-configuration.json" \
             --codesigningInformationPath=build-system/fake-codesigning \
             --configuration=release_arm64 \
