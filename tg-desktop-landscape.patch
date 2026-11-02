@@ -1,5 +1,29 @@
+diff --git a/submodules/ChatListUI/Sources/ChatListController.swift b/submodules/ChatListUI/Sources/ChatListController.swift
+index 5bdff8a..70b3558 100644
+--- a/submodules/ChatListUI/Sources/ChatListController.swift
++++ b/submodules/ChatListUI/Sources/ChatListController.swift
+@@ -2885,6 +2885,8 @@ public class ChatListControllerImpl: TelegramBaseController, ChatListController
+     }
+     
+     func updateHeaderContent() -> (primaryContent: ChatListHeaderComponent.Content?, secondaryContent: ChatListHeaderComponent.Content?) {
++        // Desktop-style layout: the header buttons (Edit, +, compose) are hidden to keep the narrow list clean.
++        let hidesHeaderButtons = self.chatListDisplayNode.isFolderRailActive && !self.chatListDisplayNode.isEditing
+         var primaryContent: ChatListHeaderComponent.Content?
+         if let primaryContext = self.primaryContext {
+             var displayBackButton: Bool = false
+@@ -2895,8 +2897,8 @@ public class ChatListControllerImpl: TelegramBaseController, ChatListController
+                 title: self.plainTitle,
+                 titleComponent: primaryContext.chatTitleComponent.flatMap { AnyComponent<Empty>($0) },
+                 chatListTitle: primaryContext.chatListTitle,
+-                leftButton: primaryContext.leftButton,
+-                rightButtons: primaryContext.rightButtons,
++                leftButton: hidesHeaderButtons ? nil : primaryContext.leftButton,
++                rightButtons: hidesHeaderButtons ? [] : primaryContext.rightButtons,
+                 backPressed: displayBackButton ? { [weak self] in
+                     guard let self else {
+                         return
 diff --git a/submodules/ChatListUI/Sources/ChatListControllerNode.swift b/submodules/ChatListUI/Sources/ChatListControllerNode.swift
-index 594f370..8032e42 100644
+index 594f370..99bc4e0 100644
 --- a/submodules/ChatListUI/Sources/ChatListControllerNode.swift
 +++ b/submodules/ChatListUI/Sources/ChatListControllerNode.swift
 @@ -1154,6 +1154,7 @@ public final class ChatListContainerNode: ASDisplayNode, ASGestureRecognizerDele
@@ -10,7 +34,7 @@ index 594f370..8032e42 100644
      private var presentationData: PresentationData
      private let animationCache: AnimationCache
      private let animationRenderer: MultiAnimationRenderer
-@@ -1441,7 +1442,121 @@ final class ChatListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
+@@ -1441,7 +1442,129 @@ final class ChatListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
          self.searchDisplayController?.updatePresentationData(presentationData)
      }
      
@@ -29,6 +53,14 @@ index 594f370..8032e42 100644
 +        return ChatListFolderRailView.railWidth
 +    }
 +    
++    /// True while the desktop-style folder column is shown (iPhone in landscape).
++    var isFolderRailActive: Bool {
++        guard let layout = self.containerLayout?.layout else {
++            return false
++        }
++        return self.folderRailWidth(layout: layout) > 0.0
++    }
++    
 +    private func handleFolderRailSelection(id: ChatListFilterTabEntryId) {
 +        guard let tabContainerData = self.controller?.tabContainerData else {
 +            return
@@ -45,7 +77,7 @@ index 594f370..8032e42 100644
 +        }
 +        var isDisabled = false
 +        if let filtersLimit = tabContainerData.2, let folderIndex {
-+            isDisabled = !self.context.isPremium && folderIndex >= Int(filtersLimit)
++            isDisabled = !self.context.isPremium && folderIndex >= filtersLimit
 +        }
 +        if isDisabled {
 +            let filtersCount = tabContainerData.0.count(where: { item in
@@ -132,7 +164,7 @@ index 594f370..8032e42 100644
          let headerContent = self.controller?.updateHeaderContent()
          
          var panels: [HeaderPanelContainerComponent.Panel] = []
-@@ -1547,7 +1662,7 @@ final class ChatListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
+@@ -1547,7 +1670,7 @@ final class ChatListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
          var navigationHeaderPanels: AnyComponent<Empty>?
          if self.controller?.tabContainerData != nil || !panels.isEmpty {
              var tabs: AnyComponent<Empty>?
@@ -141,7 +173,7 @@ index 594f370..8032e42 100644
                  let folderFilterIndex: (ChatListFilterTabEntryId, [ChatListFilterTabEntry]) -> Int? = { id, entries in
                      var index = 0
                      for entry in entries {
-@@ -1880,7 +1995,12 @@ final class ChatListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
+@@ -1880,7 +2003,12 @@ final class ChatListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
          }
      }
      
@@ -155,7 +187,7 @@ index 594f370..8032e42 100644
          var navigationBarHeight = navigationBarHeight
          var visualNavigationHeight = visualNavigationHeight
          var cleanNavigationBarHeight = cleanNavigationBarHeight
-diff --git a/b/submodules/ChatListUI/Sources/ChatListFolderRailView.swift b/submodules/ChatListUI/Sources/ChatListFolderRailView.swift
+diff --git a/submodules/ChatListUI/Sources/ChatListFolderRailView.swift b/submodules/ChatListUI/Sources/ChatListFolderRailView.swift
 new file mode 100644
 index 0000000..b759529
 --- /dev/null
@@ -368,7 +400,7 @@ index 0000000..b759529
 +    }
 +}
 diff --git a/submodules/Display/Source/Navigation/NavigationSplitContainer.swift b/submodules/Display/Source/Navigation/NavigationSplitContainer.swift
-index fb22822..1d5716f 100644
+index fb22822..0d1b863 100644
 --- a/submodules/Display/Source/Navigation/NavigationSplitContainer.swift
 +++ b/submodules/Display/Source/Navigation/NavigationSplitContainer.swift
 @@ -16,6 +16,10 @@ public func splitMasterWidth(containerSize: CGSize, division: CGRect?) -> CGFloa
@@ -377,13 +409,13 @@ index fb22822..1d5716f 100644
      }
 +    if UIDevice.current.userInterfaceIdiom == .phone {
 +        // iPhone in landscape: the master pane also holds the vertical folder column, so it is a bit wider.
-+        return min(max(340.0, floor(containerSize.width * 0.38)), floor(containerSize.width / 2.0))
++        return min(max(380.0, floor(containerSize.width * 0.42)), floor(containerSize.width / 2.0))
 +    }
      return min(max(320.0, floor(containerSize.width / 3.0)), floor(containerSize.width / 2.0))
  }
  
 diff --git a/submodules/Display/Source/WindowContent.swift b/submodules/Display/Source/WindowContent.swift
-index 8873fc6..17782cd 100644
+index 8873fc6..3c2e701 100644
 --- a/submodules/Display/Source/WindowContent.swift
 +++ b/submodules/Display/Source/WindowContent.swift
 @@ -344,6 +344,9 @@ public extension UIView {
@@ -396,6 +428,118 @@ index 8873fc6..17782cd 100644
      } else {
          return LayoutMetrics(widthClass: .compact, heightClass: .compact, orientation: orientation, windowSize: size)
      }
+@@ -1134,6 +1137,10 @@ public class Window1 {
+                         case .compact:
+                             resolvedOrientations = supportedOrientations.compactSize
+                         }
++                        if UIDevice.current.userInterfaceIdiom == .phone {
++                            // Desktop-style layout: the iPhone app always runs in landscape.
++                            resolvedOrientations = .landscape
++                        }
+                         if resolvedOrientations.isEmpty {
+                             resolvedOrientations = [.portrait]
+                         }
+@@ -1282,6 +1289,10 @@ public class Window1 {
+                 case .compact:
+                     resolvedOrientations = supportedOrientations.compactSize
+             }
++            if UIDevice.current.userInterfaceIdiom == .phone {
++                // Desktop-style layout: the iPhone app always runs in landscape.
++                resolvedOrientations = .landscape
++            }
+             if resolvedOrientations.isEmpty {
+                 resolvedOrientations = [.portrait]
+             }
+@@ -1321,6 +1332,10 @@ public class Window1 {
+                     case .compact:
+                         resolvedOrientations = supportedOrientations.compactSize
+                 }
++                if UIDevice.current.userInterfaceIdiom == .phone {
++                    // Desktop-style layout: the iPhone app always runs in landscape.
++                    resolvedOrientations = .landscape
++                }
+                 if resolvedOrientations.isEmpty {
+                     resolvedOrientations = [.portrait]
+                 }
+diff --git a/submodules/TabBarUI/Sources/TabBarContollerNode.swift b/submodules/TabBarUI/Sources/TabBarContollerNode.swift
+index 2b833df..fa9584e 100644
+--- a/submodules/TabBarUI/Sources/TabBarContollerNode.swift
++++ b/submodules/TabBarUI/Sources/TabBarContollerNode.swift
+@@ -62,6 +62,14 @@ final class TabBarControllerNode: ASDisplayNode {
+     
+     private let tabBarView = ComponentView<Empty>()
+     
++    deinit {
++        // In the desktop-style layout the bar can be hosted by an ancestor view; do not leave it behind.
++        let tabBarComponentView = self.tabBarView.view
++        DispatchQueue.main.async {
++            tabBarComponentView?.removeFromSuperview()
++        }
++    }
++    
+     private let disabledOverlayNode: ASDisplayNode
+     private var toolbar: ComponentView<Empty>?
+     private let toolbarActionSelected: (ToolbarActionOption) -> Void
+@@ -328,20 +336,35 @@ final class TabBarControllerNode: ASDisplayNode {
+         )
+         let tabBarFrame: CGRect
+         if let sidePlacement {
+-            tabBarFrame = self.tabBarHidden ? sidePlacement.hiddenFrame(containerWidth: params.layout.size.width) : sidePlacement.frame
++            tabBarFrame = self.tabBarHidden ? sidePlacement.hiddenFrame(containerWidth: params.layout.metrics.windowSize?.width ?? params.layout.size.width) : sidePlacement.frame
+         } else {
+             tabBarFrame = CGRect(origin: CGPoint(x: floor((params.layout.size.width - tabBarSize.width) * 0.5), y: params.layout.size.height - (self.tabBarHidden ? 0.0 : (tabBarSize.height + tabBarBottomInset))), size: tabBarSize)
+         }
+         
+         if let tabBarComponentView = self.tabBarView.view {
+-            if tabBarComponentView.superview == nil {
+-                self.view.addSubview(tabBarComponentView)
++            // Desktop-style layout: the vertical bar lies right of the master pane, so an ancestor that spans the whole
++            // window hosts it (above the chat pane); otherwise it is a subview of this node as usual.
++            var hostView: UIView = self.view
++            if let sidePlacement, sidePlacement.frame.maxX > params.layout.size.width + 0.5, let windowWidth = params.layout.metrics.windowSize?.width {
++                var current: UIView? = self.view.superview
++                while let candidate = current {
++                    if candidate.bounds.width >= windowWidth - 1.0 {
++                        hostView = candidate
++                        break
++                    }
++                    current = candidate.superview
++                }
++            }
++            if tabBarComponentView.superview !== hostView {
++                hostView.addSubview(tabBarComponentView)
++            } else if hostView !== self.view {
++                hostView.bringSubviewToFront(tabBarComponentView)
+             }
+             let tabBarAlpha: CGFloat = params.toolbar == nil ? 1.0 : 0.0
+             if let crossfadeDuration, let previousAppliedPlacement, let previousPlacement = previousAppliedPlacement.placement {
+                 if !previousAppliedPlacement.isHidden && tabBarComponentView.alpha > 0.0, let snapshotView = tabBarComponentView.snapshotView(afterScreenUpdates: false) {
+                     snapshotView.frame = previousPlacement.movedFrame(from: previousAppliedPlacement.containerSize, to: params.layout.size)
+-                    self.view.insertSubview(snapshotView, aboveSubview: tabBarComponentView)
++                    tabBarComponentView.superview?.insertSubview(snapshotView, aboveSubview: tabBarComponentView)
+                     snapshotView.layer.animateAlpha(from: 1.0, to: 0.0, duration: crossfadeDuration * 0.5, removeOnCompletion: false, completion: { [weak snapshotView] _ in
+                         snapshotView?.removeFromSuperview()
+                     })
+diff --git a/submodules/TelegramUI/Components/TabBarLayout/Sources/TabBarSidePlacement.swift b/submodules/TelegramUI/Components/TabBarLayout/Sources/TabBarSidePlacement.swift
+index e21be3c..e997831 100644
+--- a/submodules/TelegramUI/Components/TabBarLayout/Sources/TabBarSidePlacement.swift
++++ b/submodules/TelegramUI/Components/TabBarLayout/Sources/TabBarSidePlacement.swift
+@@ -42,6 +42,15 @@ public func tabBarSidePlacement(layout: ContainerViewLayout, itemCount: Int) ->
+     if itemCount <= 0 {
+         return nil
+     }
++    // Desktop-style layout (iPhone in landscape, wide split layout): a vertical bar at the right screen edge,
++    // behind the chat. The frame is in the window's coordinates, i.e. it lies outside the master pane the
++    // tab bar controller lives in, so the tab bar view is hosted by an ancestor view (see TabBarControllerNode).
++    if UIDevice.current.userInterfaceIdiom == .phone, case .regular = layout.metrics.widthClass, let windowSize = layout.metrics.windowSize {
++        let size = CGSize(width: tabBarCompactItemThickness + tabBarInnerInset * 2.0, height: CGFloat(itemCount) * tabBarItemLength + tabBarInnerInset * 2.0)
++        let x = windowSize.width - 6.0 - size.width
++        let y = max(8.0, floor((layout.size.height - size.height) / 2.0))
++        return TabBarSidePlacement(edge: .right, frame: CGRect(x: x, y: y, width: size.width, height: size.height))
++    }
+     let edge: ContainerViewLayoutSideEdge
+     let strip: CGRect
+     if let rightStrip = layout.sideStrip(edge: .right) {
 diff --git a/submodules/TelegramUI/Sources/AppDelegate.swift b/submodules/TelegramUI/Sources/AppDelegate.swift
 index 1ceb46b..123a6d1 100644
 --- a/submodules/TelegramUI/Sources/AppDelegate.swift
