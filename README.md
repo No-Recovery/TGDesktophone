@@ -19,6 +19,9 @@ workflow, который собирает из официального репо
 - `ChatListUI/Sources/ChatListControllerNode.swift` — колонка папок, скрытие
   горизонтальных табов, место под колонку через `safeInsets`.
 - `ChatListUI/Sources/ChatListFolderRailView.swift` — новый файл, сама колонка.
+- `TelegramUI/Sources/AppDelegate.swift` — если сертификат не даёт App Group,
+  приложение берёт `Library/TelegramAppGroup` в своей песочнице вместо контейнера
+  группы и не падает на чёрный экран.
 
 Ширина колонки — `ChatListFolderRailView.railWidth` (64 pt), порог ландшафта —
 640 pt в `WindowContent.swift`.
