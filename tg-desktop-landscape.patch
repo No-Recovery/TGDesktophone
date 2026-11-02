@@ -45,7 +45,7 @@ index 594f370..8032e42 100644
 +        }
 +        var isDisabled = false
 +        if let filtersLimit = tabContainerData.2, let folderIndex {
-+            isDisabled = !self.context.isPremium && folderIndex >= filtersLimit
++            isDisabled = !self.context.isPremium && folderIndex >= Int(filtersLimit)
 +        }
 +        if isDisabled {
 +            let filtersCount = tabContainerData.0.count(where: { item in
@@ -396,3 +396,25 @@ index 8873fc6..17782cd 100644
      } else {
          return LayoutMetrics(widthClass: .compact, heightClass: .compact, orientation: orientation, windowSize: size)
      }
+diff --git a/submodules/TelegramUI/Sources/AppDelegate.swift b/submodules/TelegramUI/Sources/AppDelegate.swift
+index 1ceb46b..123a6d1 100644
+--- a/submodules/TelegramUI/Sources/AppDelegate.swift
++++ b/submodules/TelegramUI/Sources/AppDelegate.swift
+@@ -573,7 +573,16 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
+         try! PasscodeEnvironment.shared.configure(PasscodeConfiguration(appGroupIdentifier: appGroupName, processRole: .mainApp, biometricKeychainService: walletBiometricKeychainService), privateAccessGroup: {
+             BuildConfig.keychainAccessGroup(baseAppBundleId: baseAppBundleId)
+         })
+-        let maybeAppGroupUrl = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupName)
++        var maybeAppGroupUrl = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupName)
++        if maybeAppGroupUrl == nil {
++            // Sideloaded builds are often signed without the App Groups entitlement. Instead of stopping on a black screen,
++            // keep the data in the app's own sandbox (the share/widget extensions will not see it).
++            if let supportUrl = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
++                let fallbackUrl = supportUrl.appendingPathComponent("telegram-app-group-fallback", isDirectory: true)
++                try? FileManager.default.createDirectory(at: fallbackUrl, withIntermediateDirectories: true, attributes: nil)
++                maybeAppGroupUrl = fallbackUrl
++            }
++        }
+         
+         let buildConfig = BuildConfig(baseAppBundleId: baseAppBundleId)
+         self.buildConfig = buildConfig

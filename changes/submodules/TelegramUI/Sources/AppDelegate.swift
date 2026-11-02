@@ -319,9 +319,7 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
         let appGroupName = "group.\(baseAppBundleId)"
 
         let configuration = URLSessionConfiguration.background(withIdentifier: identifier)
-        if FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupName) != nil {
-            configuration.sharedContainerIdentifier = appGroupName
-        }
+        configuration.sharedContainerIdentifier = appGroupName
         configuration.isDiscretionary = false
         let session = URLSession(configuration: configuration, delegate: self, delegateQueue: .main)
         self.urlSessions.append(session)
@@ -575,7 +573,16 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
         try! PasscodeEnvironment.shared.configure(PasscodeConfiguration(appGroupIdentifier: appGroupName, processRole: .mainApp, biometricKeychainService: walletBiometricKeychainService), privateAccessGroup: {
             BuildConfig.keychainAccessGroup(baseAppBundleId: baseAppBundleId)
         })
-        let maybeAppGroupUrl = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupName)
+        var maybeAppGroupUrl = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupName)
+        if maybeAppGroupUrl == nil {
+            // Sideloaded builds are often signed without the App Groups entitlement. Instead of stopping on a black screen,
+            // keep the data in the app's own sandbox (the share/widget extensions will not see it).
+            if let supportUrl = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+                let fallbackUrl = supportUrl.appendingPathComponent("telegram-app-group-fallback", isDirectory: true)
+                try? FileManager.default.createDirectory(at: fallbackUrl, withIntermediateDirectories: true, attributes: nil)
+                maybeAppGroupUrl = fallbackUrl
+            }
+        }
         
         let buildConfig = BuildConfig(baseAppBundleId: baseAppBundleId)
         self.buildConfig = buildConfig
@@ -698,7 +705,10 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
             networkEngineFactory: RustNetworkEngineFactory()
         )
         
-        let appGroupUrl = maybeAppGroupUrl ?? appGroupFallbackUrl()
+        guard let appGroupUrl = maybeAppGroupUrl else {
+            self.mainWindow?.presentNative(UIAlertController(title: nil, message: "Error 2", preferredStyle: .alert))
+            return true
+        }
         
         var isDebugConfiguration = false
         #if DEBUG
@@ -3538,14 +3548,4 @@ private final class NavigationBarOverflowMenuReferenceSource: ContextReferenceCo
     func transitionInfo() -> ContextControllerReferenceViewInfo? {
         return ContextControllerReferenceViewInfo(referenceView: self.sourceView, contentAreaInScreenSpace: mainWindowScreenBounds)
     }
-}
-
-private func appGroupFallbackUrl() -> URL {
-    let fileManager = FileManager.default
-    if let libraryUrl = fileManager.urls(for: .libraryDirectory, in: .userDomainMask).first {
-        let url = libraryUrl.appendingPathComponent("TelegramAppGroup", isDirectory: true)
-        try? fileManager.createDirectory(at: url, withIntermediateDirectories: true, attributes: nil)
-        return url
-    }
-    return URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
 }
