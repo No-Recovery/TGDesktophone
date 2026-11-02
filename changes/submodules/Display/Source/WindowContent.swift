@@ -1137,6 +1137,10 @@ public class Window1 {
                         case .compact:
                             resolvedOrientations = supportedOrientations.compactSize
                         }
+                        if UIDevice.current.userInterfaceIdiom == .phone {
+                            // Desktop-style layout: the iPhone app always runs in landscape.
+                            resolvedOrientations = .landscape
+                        }
                         if resolvedOrientations.isEmpty {
                             resolvedOrientations = [.portrait]
                         }
@@ -1285,6 +1289,10 @@ public class Window1 {
                 case .compact:
                     resolvedOrientations = supportedOrientations.compactSize
             }
+            if UIDevice.current.userInterfaceIdiom == .phone {
+                // Desktop-style layout: the iPhone app always runs in landscape.
+                resolvedOrientations = .landscape
+            }
             if resolvedOrientations.isEmpty {
                 resolvedOrientations = [.portrait]
             }
@@ -1323,6 +1331,10 @@ public class Window1 {
                         resolvedOrientations = supportedOrientations.regularSize
                     case .compact:
                         resolvedOrientations = supportedOrientations.compactSize
+                }
+                if UIDevice.current.userInterfaceIdiom == .phone {
+                    // Desktop-style layout: the iPhone app always runs in landscape.
+                    resolvedOrientations = .landscape
                 }
                 if resolvedOrientations.isEmpty {
                     resolvedOrientations = [.portrait]

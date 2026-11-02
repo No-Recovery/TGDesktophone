@@ -1457,6 +1457,14 @@ final class ChatListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
         return ChatListFolderRailView.railWidth
     }
     
+    /// True while the desktop-style folder column is shown (iPhone in landscape).
+    var isFolderRailActive: Bool {
+        guard let layout = self.containerLayout?.layout else {
+            return false
+        }
+        return self.folderRailWidth(layout: layout) > 0.0
+    }
+    
     private func handleFolderRailSelection(id: ChatListFilterTabEntryId) {
         guard let tabContainerData = self.controller?.tabContainerData else {
             return
@@ -1473,7 +1481,7 @@ final class ChatListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
         }
         var isDisabled = false
         if let filtersLimit = tabContainerData.2, let folderIndex {
-            isDisabled = !self.context.isPremium && folderIndex >= Int(filtersLimit)
+            isDisabled = !self.context.isPremium && folderIndex >= filtersLimit
         }
         if isDisabled {
             let filtersCount = tabContainerData.0.count(where: { item in

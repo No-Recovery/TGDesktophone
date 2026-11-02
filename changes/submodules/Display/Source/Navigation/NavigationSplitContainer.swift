@@ -18,7 +18,7 @@ public func splitMasterWidth(containerSize: CGSize, division: CGRect?) -> CGFloa
     }
     if UIDevice.current.userInterfaceIdiom == .phone {
         // iPhone in landscape: the master pane also holds the vertical folder column, so it is a bit wider.
-        return min(max(340.0, floor(containerSize.width * 0.38)), floor(containerSize.width / 2.0))
+        return min(max(380.0, floor(containerSize.width * 0.42)), floor(containerSize.width / 2.0))
     }
     return min(max(320.0, floor(containerSize.width / 3.0)), floor(containerSize.width / 2.0))
 }
